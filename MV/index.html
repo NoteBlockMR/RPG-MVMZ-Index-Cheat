@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <link rel="icon" href="icon/icon.png" type="image/png">
+    <link rel="apple-touch-icon" href="icon/icon.png">
+    <link rel="stylesheet" href="fonts/gamefont.css">
+    <title>MV Version</title>
+</head>
+<body style="background-color:black">
+    <script src="js/libs/pixi.js"></script>
+    <script src="js/libs/pixi-tilemap.js"></script>
+    <script src="js/libs/pixi-picture.js"></script>
+    <script src="js/libs/fpsmeter.js"></script>
+    <script src="js/libs/lz-string.js"></script>
+    <script src="js/libs/iphone-inline-video.browser.js"></script>
+    <script src="js/rpg_core.js"></script>
+    <script src="js/rpg_managers.js"></script>
+    <script src="js/rpg_objects.js"></script>
+    <script src="js/rpg_scenes.js"></script>
+    <script src="js/rpg_sprites.js"></script>
+    <script src="js/rpg_windows.js"></script>
+    <script src="js/plugins.js"></script>
+    <script src="js/main.js"></script>
+    <!-- RPG Maker MV/MZ 치트 시스템 -->
+    <script>
+    (function () {
+        "use strict";
+
+        var PANEL_STYLE = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:linear-gradient(145deg,#111,#000);color:#fff;padding:20px;z-index:200000;font-family:sans-serif;border-radius:20px;box-shadow:0 0 30px rgba(0,255,255,.15);display:none;border:1px solid #333;width:90vw;max-width:500px;height:75vh;overflow:hidden;flex-direction:column;box-sizing:border-box;";
+        var BUTTON_STYLE = "padding:12px;margin:5px 0;cursor:pointer;background:#222;color:#0ef;border:1px solid #0ef;border-radius:10px;font-size:14px;font-weight:800;";
+
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function numberValue(value, fallback) {
+            var result = Number(value);
+            return isFinite(result) ? Math.floor(result) : fallback;
+        }
+
+        function clearGameInput() {
+            if (typeof Input !== "undefined" && Input.clear) Input.clear();
+            if (typeof TouchInput !== "undefined" && TouchInput.clear) TouchInput.clear();
+        }
+
+        function blockGameInput(element) {
+            var events = [
+                "mousedown", "mouseup", "mousemove",
+                "pointerdown", "pointerup", "pointermove",
+                "touchstart", "touchend", "touchmove",
+                "wheel", "contextmenu"
+            ];
+            for (var i = 0; i < events.length; i++) {
+                element.addEventListener(events[i], function (event) {
+                    event.stopPropagation();
+                }, { passive: false });
+            }
+        }
+
+        window.GodMode = {
+            panels: { f5: null, f6: null, f7: null, f8: null, f9: null },
+            overlay: null,
+            noclip: false,
+            originalPassable: null,
+            originalCanMove: null,
+
+            isReady: function () {
+                return typeof $gameParty !== "undefined" &&
+                    typeof $gameActors !== "undefined" &&
+                    typeof $gamePlayer !== "undefined" &&
+                    typeof $dataSystem !== "undefined" &&
+                    !!$gameParty && !!$dataSystem;
+            },
+
+            shutDown: function () {
+                var keys = Object.keys(this.panels);
+                for (var i = 0; i < keys.length; i++) {
+                    var panel = this.panels[keys[i]];
+                    if (panel) panel.style.display = "none";
+                }
+                if (this.overlay) this.overlay.style.display = "none";
+                var menu = document.getElementById("mz_main_menu");
+                if (menu) menu.style.display = "none";
+                clearGameInput();
+            },
+
+            showOverlay: function () {
+                if (!this.overlay) {
+                    this.overlay = document.createElement("div");
+                    this.overlay.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.6);z-index:199999;";
+                    blockGameInput(this.overlay);
+                    this.overlay.onclick = function (event) {
+                        event.stopPropagation();
+                        GodMode.shutDown();
+                    };
+                    document.body.appendChild(this.overlay);
+                }
+                this.overlay.style.display = "block";
+            },
+
+            openPanel: function (key) {
+                if (!this.isReady()) {
+                    alert("게임 데이터를 불러오는 중입니다. 게임 화면이 열린 뒤 다시 시도해 주세요.");
+                    return;
+                }
+                if (key === "f5" && encryptedImagesWithoutKey()) {
+                    alert("암호화 이미지 키가 없어 이미지 뷰어를 사용할 수 없습니다.");
+                    return;
+                }
+                this.shutDown();
+                this.showOverlay();
+                if (key === "f5") initF5();
+                if (key === "f6") initF6();
+                if (key === "f7") initF7();
+                if (key === "f8") initF8();
+                if (key === "f9") initF9();
+                var panel = this.panels[key];
+                if (panel) {
+                    panel.style.display = "flex";
+                    if (key === "f5") refreshF5();
+                    if (key === "f7") refreshF7();
+                    if (key === "f8") refreshF8();
+                    if (key === "f9") refreshF9();
+                }
+                clearGameInput();
+            }
+        };
+
+        function createTrigger() {
+            if (document.getElementById("mz_trigger")) return;
+            if (!GodMode.originalCanMove && typeof Game_Player !== "undefined") {
+                GodMode.originalCanMove = Game_Player.prototype.canMove;
+                Game_Player.prototype.canMove = function () {
+                    var overlay = GodMode.overlay;
+                    if (overlay && overlay.style.display !== "none") return false;
+                    return GodMode.originalCanMove.apply(this, arguments);
+                };
+            }
+            var button = document.createElement("button");
+            button.id = "mz_trigger";
+            button.type = "button";
+            button.textContent = "⚙";
+            button.title = "치트 메뉴";
+            button.style.cssText = "position:fixed;bottom:20px;right:20px;z-index:200005;background:#0ef;color:#000;width:55px;height:55px;border:0;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;box-shadow:0 0 15px #0ef;cursor:pointer;";
+            blockGameInput(button);
+            button.onclick = function (event) {
+                event.stopPropagation();
+                clearGameInput();
+                var menu = document.getElementById("mz_main_menu");
+                menu.style.display = menu.style.display === "flex" ? "none" : "flex";
+            };
+            document.body.appendChild(button);
+
+            var menu = document.createElement("div");
+            menu.id = "mz_main_menu";
+            menu.style.cssText = PANEL_STYLE + "width:180px;height:auto;top:auto;bottom:85px;left:auto;right:20px;transform:none;border-color:#0ef;";
+            var imageLocked = encryptedImagesWithoutKey();
+            menu.innerHTML =
+                '<button id="mz_image_menu_btn" style="' + BUTTON_STYLE + (imageLocked ? 'opacity:.4;cursor:not-allowed;color:#888;border-color:#555' : '') + '" ' + (imageLocked ? 'disabled title="암호화 키가 없어 이미지를 복호화할 수 없습니다."' : 'onclick="GodMode.openPanel(\'f5\')"') + '>IMAGES (F5)</button>' +
+                '<button style="' + BUTTON_STYLE + 'border-color:#ff4757;color:#ff4757" onclick="GodMode.openPanel(\'f9\')">ACTOR (F9)</button>' +
+                '<button style="' + BUTTON_STYLE + '" onclick="GodMode.openPanel(\'f6\')">WARP (F6)</button>' +
+                '<button style="' + BUTTON_STYLE + '" onclick="GodMode.openPanel(\'f7\')">DATA (F7)</button>' +
+                '<button style="' + BUTTON_STYLE + '" onclick="GodMode.openPanel(\'f8\')">RICH (F8)</button>' +
+                '<button style="' + BUTTON_STYLE + 'background:#444;color:#fff;border:0" onclick="GodMode.shutDown()">EXIT</button>';
+            blockGameInput(menu);
+            document.body.appendChild(menu);
+        }
+
+        var imageViewer = {
+            items: [],
+            filtered: [],
+            page: 0,
+            pageSize: 20,
+            renderToken: 0
+        };
+
+        function encryptedImagesWithoutKey() {
+            var encrypted = false;
+            var key = "";
+            if (typeof $dataSystem !== "undefined" && $dataSystem) {
+                encrypted = !!($dataSystem.hasEncryptedImages || $dataSystem.encryptedImages);
+                key = $dataSystem.encryptionKey || "";
+            }
+            if (typeof Decrypter !== "undefined") {
+                encrypted = encrypted || !!Decrypter.hasEncryptedImages;
+                key = key || Decrypter._encryptionKey || "";
+            }
+            return encrypted && !String(key).replace(/\s/g, "");
+        }
+
+        function addImageEntry(list, seen, folder, name, category) {
+            if (!name) return;
+            name = String(name).replace(/\.(png|jpg|jpeg|webp)$/i, "");
+            var key = folder + name;
+            if (seen[key]) return;
+            seen[key] = true;
+            list.push({ folder: folder, name: name, category: category });
+        }
+
+        function scanPictureCommands(commandList, list, seen) {
+            if (!commandList) return;
+            for (var i = 0; i < commandList.length; i++) {
+                var command = commandList[i];
+                if (command && command.code === 231 && command.parameters) {
+                    addImageEntry(list, seen, "img/pictures/", command.parameters[1], "Pictures");
+                }
+            }
+        }
+
+        function scanLocalImageFolders(list, seen) {
+            if (typeof require !== "function" || typeof process === "undefined") return false;
+            try {
+                var fs = require("fs");
+                var path = require("path");
+                var roots = [];
+                if (process.mainModule && process.mainModule.filename) {
+                    roots.push(path.dirname(process.mainModule.filename));
+                }
+                if (process.cwd) roots.push(process.cwd());
+                if (typeof location !== "undefined" && location.pathname) {
+                    var pathname = decodeURIComponent(location.pathname);
+                    if (/^\/[A-Za-z]:\//.test(pathname)) pathname = pathname.substring(1);
+                    roots.push(path.dirname(pathname));
+                }
+                var folders = [
+                    { path: "img/parallaxes", url: "img/parallaxes/", category: "Parallaxes" },
+                    { path: "img/pictures", url: "img/pictures/", category: "Pictures" }
+                ];
+                var foundRoot = null;
+                for (var r = 0; r < roots.length; r++) {
+                    if (fs.existsSync(path.join(roots[r], "img"))) {
+                        foundRoot = roots[r];
+                        break;
+                    }
+                }
+                if (!foundRoot) return false;
+                for (var f = 0; f < folders.length; f++) {
+                    var directory = path.join(foundRoot, folders[f].path);
+                    if (!fs.existsSync(directory)) continue;
+                    var files = fs.readdirSync(directory);
+                    for (var i = 0; i < files.length; i++) {
+                        var file = files[i];
+                        if (!/\.(png|jpg|jpeg|webp|rpgmvp|png_)$/i.test(file)) continue;
+                        var name = file.replace(/\.(png|jpg|jpeg|webp|rpgmvp|png_)$/i, "");
+                        addImageEntry(list, seen, folders[f].url, name, folders[f].category);
+                    }
+                }
+                return true;
+            } catch (error) {
+                console.warn("Image folder scan failed:", error);
+                return false;
+            }
+        }
+
+        function collectImageEntries() {
+            var list = [];
+            var seen = {};
+            var i;
+            var data;
+            scanLocalImageFolders(list, seen);
+            if (typeof $dataMap !== "undefined" && $dataMap) {
+                addImageEntry(list, seen, "img/parallaxes/", $dataMap.parallaxName, "Parallaxes");
+                if ($dataMap.events) {
+                    for (i = 1; i < $dataMap.events.length; i++) {
+                        data = $dataMap.events[i];
+                        if (!data || !data.pages) continue;
+                        for (var p = 0; p < data.pages.length; p++) {
+                            scanPictureCommands(data.pages[p].list, list, seen);
+                        }
+                    }
+                }
+            }
+            if (typeof $dataCommonEvents !== "undefined" && $dataCommonEvents) {
+                for (i = 1; i < $dataCommonEvents.length; i++) {
+                    data = $dataCommonEvents[i];
+                    if (data) scanPictureCommands(data.list, list, seen);
+                }
+            }
+            list.sort(function (a, b) {
+                return (a.category + a.name).localeCompare(b.category + b.name);
+            });
+            return list;
+        }
+
+        function initF5() {
+            if (GodMode.panels.f5 || encryptedImagesWithoutKey()) return;
+            var panel = GodMode.panels.f5 = document.createElement("div");
+            panel.style.cssText = PANEL_STYLE + "max-width:760px;border-color:#b06cff;";
+            panel.innerHTML =
+                '<h2 style="color:#b06cff;text-align:center;margin:0 0 8px">IMAGE VIEWER</h2>' +
+                '<input id="mz_image_search" placeholder="파일명 또는 분류 검색" style="width:100%;padding:8px;background:#000;color:#fff;border:1px solid #b06cff;box-sizing:border-box;margin-bottom:8px">' +
+                '<canvas id="mz_image_preview" style="display:none;max-width:100%;height:210px;object-fit:contain;margin:0 auto 8px;background:#080808;border:1px solid #333"></canvas>' +
+                '<div id="mz_image_grid" style="display:flex;flex-wrap:wrap;align-content:flex-start;gap:8px;flex:1;overflow-y:auto"></div>' +
+                '<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px"><button id="mz_image_prev">◀</button><span id="mz_image_page"></span><button id="mz_image_next">▶</button></div>';
+            blockGameInput(panel);
+            document.body.appendChild(panel);
+            imageViewer.items = collectImageEntries();
+            document.getElementById("mz_image_search").oninput = function () {
+                imageViewer.page = 0;
+                refreshF5();
+            };
+            document.getElementById("mz_image_prev").onclick = function () {
+                if (imageViewer.page > 0) {
+                    imageViewer.page--;
+                    renderImagePage();
+                }
+            };
+            document.getElementById("mz_image_next").onclick = function () {
+                if ((imageViewer.page + 1) * imageViewer.pageSize < imageViewer.filtered.length) {
+                    imageViewer.page++;
+                    renderImagePage();
+                }
+            };
+        }
+
+        function bitmapSource(bitmap) {
+            return bitmap._canvas || bitmap.canvas || bitmap._image || null;
+        }
+
+        function drawBitmap(canvas, bitmap, maxWidth, maxHeight) {
+            var source = bitmapSource(bitmap);
+            var width = bitmap.width || (source && source.width);
+            var height = bitmap.height || (source && source.height);
+            if (!source || !width || !height) return;
+            var scale = Math.min(maxWidth / width, maxHeight / height, 1);
+            canvas.width = Math.max(1, Math.round(width * scale));
+            canvas.height = Math.max(1, Math.round(height * scale));
+            var context = canvas.getContext("2d");
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.imageSmoothingEnabled = false;
+            context.drawImage(source, 0, 0, width, height, 0, 0, canvas.width, canvas.height);
+        }
+
+        function showImagePreview(entry) {
+            var canvas = document.getElementById("mz_image_preview");
+            if (!canvas) return;
+            canvas.style.display = "block";
+            var bitmap = ImageManager.loadBitmap(entry.folder, entry.name, 0, true);
+            bitmap.addLoadListener(function () {
+                if (!document.documentElement.contains(canvas)) return;
+                drawBitmap(canvas, bitmap, 700, 210);
+                canvas.title = entry.folder + entry.name;
+            });
+        }
+
+        function renderImagePage() {
+            var grid = document.getElementById("mz_image_grid");
+            if (!grid) return;
+            var token = ++imageViewer.renderToken;
+            grid.textContent = "";
+            var start = imageViewer.page * imageViewer.pageSize;
+            var end = Math.min(start + imageViewer.pageSize, imageViewer.filtered.length);
+            for (var i = start; i < end; i++) {
+                (function (entry) {
+                    var card = document.createElement("button");
+                    card.type = "button";
+                    card.style.cssText = "width:110px;min-height:125px;flex:1 0 110px;margin:4px;background:#151515;color:#ddd;border:1px solid #444;border-radius:6px;padding:5px;overflow:hidden;cursor:pointer;";
+                    var canvas = document.createElement("canvas");
+                    canvas.width = 96;
+                    canvas.height = 86;
+                    canvas.style.cssText = "display:block;max-width:100%;margin:auto;background:#080808;";
+                    var label = document.createElement("span");
+                    label.textContent = entry.category + "\n" + entry.name;
+                    label.style.cssText = "display:block;font-size:10px;word-break:break-all;white-space:pre-line;margin-top:4px;";
+                    card.appendChild(canvas);
+                    card.appendChild(label);
+                    card.onclick = function () { showImagePreview(entry); };
+                    grid.appendChild(card);
+                    var bitmap = ImageManager.loadBitmap(entry.folder, entry.name, 0, true);
+                    bitmap.addLoadListener(function () {
+                        if (token !== imageViewer.renderToken || !document.documentElement.contains(canvas)) return;
+                        drawBitmap(canvas, bitmap, 96, 86);
+                    });
+                }(imageViewer.filtered[i]));
+            }
+            var pages = Math.max(1, Math.ceil(imageViewer.filtered.length / imageViewer.pageSize));
+            document.getElementById("mz_image_page").textContent = (imageViewer.page + 1) + " / " + pages + " · " + imageViewer.filtered.length + " images";
+            document.getElementById("mz_image_prev").disabled = imageViewer.page <= 0;
+            document.getElementById("mz_image_next").disabled = imageViewer.page + 1 >= pages;
+        }
+
+        function refreshF5() {
+            if (encryptedImagesWithoutKey()) return;
+            var search = document.getElementById("mz_image_search");
+            if (!search) return;
+            var query = search.value.toLowerCase();
+            imageViewer.filtered = imageViewer.items.filter(function (entry) {
+                return !query || (entry.category + " " + entry.name).toLowerCase().indexOf(query) >= 0;
+            });
+            var maxPage = Math.max(0, Math.ceil(imageViewer.filtered.length / imageViewer.pageSize) - 1);
+            imageViewer.page = Math.min(imageViewer.page, maxPage);
+            renderImagePage();
+        }
+        window.refreshF5 = refreshF5;
+
+        function initF9() {
+            if (GodMode.panels.f9) return;
+            var panel = GodMode.panels.f9 = document.createElement("div");
+            panel.style.cssText = PANEL_STYLE + "border-color:#ff4757;";
+            panel.innerHTML =
+                '<h2 style="color:#ff4757;text-align:center;margin:0 0 10px">ACTOR STATUS</h2>' +
+                '<select id="mz_actor_sel" style="width:100%;padding:10px;background:#000;color:#ff4757;border:1px solid #ff4757;border-radius:8px;margin-bottom:15px"></select>' +
+                '<div id="mz_actor_core" style="flex:1;overflow-y:auto;background:rgba(0,0,0,.4);border-radius:10px;padding:10px"></div>' +
+                '<button style="' + BUTTON_STYLE + '" onclick="GodMode.shutDown()">CLOSE</button>';
+            blockGameInput(panel);
+            document.body.appendChild(panel);
+            document.getElementById("mz_actor_sel").onchange = refreshF9;
+        }
+
+        function refreshF9() {
+            var select = document.getElementById("mz_actor_sel");
+            if (!select) return;
+            var selectedId = Number(select.value);
+            select.textContent = "";
+            var members = $gameParty.allMembers();
+            for (var i = 0; i < members.length; i++) {
+                var option = document.createElement("option");
+                option.value = members[i].actorId();
+                option.textContent = members[i].name();
+                select.appendChild(option);
+            }
+            if (selectedId) select.value = String(selectedId);
+            var actor = $gameActors.actor(Number(select.value));
+            if (!actor) {
+                document.getElementById("mz_actor_core").textContent = "파티에 액터가 없습니다.";
+                return;
+            }
+            var params = [
+                ["LEVEL", "level", actor.level],
+                ["HP", "hp", actor.hp],
+                ["MP", "mp", actor.mp],
+                ["ATK", "param2", actor.param(2)],
+                ["DEF", "param3", actor.param(3)]
+            ];
+            var html = "";
+            for (var p = 0; p < params.length; p++) {
+                var row = params[p];
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid #333;padding-bottom:5px">' +
+                    '<strong>' + row[0] + '</strong><div style="display:flex;gap:8px">' +
+                    '<button onclick="mzSetActorValue(' + actor.actorId() + ',\'' + row[1] + '\',1)">1</button>' +
+                    '<input type="number" value="' + row[2] + '" onchange="mzSetActorValue(' + actor.actorId() + ',\'' + row[1] + '\',this.value)" style="width:70px;background:#000;color:#ff4757;border:1px solid #555;text-align:center">' +
+                    '<button onclick="mzSetActorValue(' + actor.actorId() + ',\'' + row[1] + '\',999)">999</button></div></div>';
+            }
+            html += '<button style="' + BUTTON_STYLE + 'width:100%;background:#ff4757;color:#fff" onclick="mzAllMax(' + actor.actorId() + ')">ALL STATS 999</button>';
+            document.getElementById("mz_actor_core").innerHTML = html;
+        }
+        window.refreshF9 = refreshF9;
+
+        window.mzSetActorValue = function (id, key, rawValue) {
+            var actor = $gameActors.actor(Number(id));
+            var value = Math.max(0, numberValue(rawValue, 0));
+            if (!actor) return;
+            if (key === "level") actor.changeLevel(Math.min(value, actor.maxLevel()), false);
+            else if (key === "hp") actor.setHp(Math.min(value, actor.mhp));
+            else if (key === "mp") actor.setMp(Math.min(value, actor.mmp));
+            else if (key.indexOf("param") === 0) {
+                var paramId = Number(key.substring(5));
+                actor.addParam(paramId, value - actor.param(paramId));
+            }
+            refreshF9();
+        };
+
+        window.mzAllMax = function (id) {
+            var actor = $gameActors.actor(Number(id));
+            if (!actor) return;
+            actor.changeLevel(actor.maxLevel(), false);
+            for (var i = 0; i < 8; i++) actor.addParam(i, Math.max(0, 999 - actor.param(i)));
+            actor.recoverAll();
+            refreshF9();
+        };
+
+        function initF6() {
+            if (GodMode.panels.f6) return;
+            var panel = GodMode.panels.f6 = document.createElement("div");
+            panel.style.cssText = PANEL_STYLE + "border-color:#0ef;";
+            panel.innerHTML =
+                '<h2 style="text-align:center;color:#0ef;margin:0 0 15px">MAP WARP</h2>' +
+                '<select id="mz_map_sel" style="width:100%;padding:12px;background:#000;color:#0ef;border:1px solid #0ef;border-radius:8px;margin-bottom:15px"></select>' +
+                '<div style="display:flex;gap:10px;margin-bottom:20px">X: <input id="mz_x" type="number" min="0" value="1" style="width:100%;background:#222;color:#fff;padding:8px"> Y: <input id="mz_y" type="number" min="0" value="1" style="width:100%;background:#222;color:#fff;padding:8px"></div>' +
+                '<button style="' + BUTTON_STYLE + '" onclick="mzDoWarp()">WARP START</button>' +
+                '<button id="mz_nc_toggle" style="' + BUTTON_STYLE + '">NOCLIP: OFF</button>';
+            blockGameInput(panel);
+            document.body.appendChild(panel);
+            var select = document.getElementById("mz_map_sel");
+            if (typeof $dataMapInfos !== "undefined" && $dataMapInfos) {
+                for (var i = 1; i < $dataMapInfos.length; i++) {
+                    var map = $dataMapInfos[i];
+                    if (!map || !map.name) continue;
+                    var option = document.createElement("option");
+                    option.value = i;
+                    option.textContent = i + ": " + map.name;
+                    select.appendChild(option);
+                }
+            }
+            document.getElementById("mz_nc_toggle").onclick = function () {
+                if (!GodMode.originalPassable) GodMode.originalPassable = Game_Player.prototype.isMapPassable;
+                GodMode.noclip = !GodMode.noclip;
+                Game_Player.prototype.isMapPassable = GodMode.noclip ? function () { return true; } : GodMode.originalPassable;
+                this.textContent = GodMode.noclip ? "NOCLIP: ON" : "NOCLIP: OFF";
+            };
+        }
+
+        window.mzDoWarp = function () {
+            var mapId = numberValue(document.getElementById("mz_map_sel").value, 0);
+            var x = Math.max(0, numberValue(document.getElementById("mz_x").value, 0));
+            var y = Math.max(0, numberValue(document.getElementById("mz_y").value, 0));
+            if (!mapId) return;
+            $gamePlayer.reserveTransfer(mapId, x, y, 2, 0);
+            clearGameInput();
+            SceneManager.goto(Scene_Map);
+            GodMode.shutDown();
+        };
+
+        function initF7() {
+            if (GodMode.panels.f7) return;
+            var panel = GodMode.panels.f7 = document.createElement("div");
+            panel.style.cssText = PANEL_STYLE + "border-color:#0f0;";
+            panel.innerHTML =
+                '<h2 style="color:#0f0;text-align:center;margin:0 0 10px">SYSTEM DATA</h2>' +
+                '<input id="mz_search" placeholder="Search..." style="width:100%;padding:8px;background:#000;color:#0f0;border:1px solid #0f0;margin-bottom:10px;box-sizing:border-box">' +
+                '<div style="display:flex;flex:1;overflow:hidden;gap:10px"><div id="mz_sw_box" style="flex:1;overflow-y:auto;background:rgba(0,0,0,.4);padding:5px"></div><div id="mz_var_box" style="flex:1;overflow-y:auto;background:rgba(0,0,0,.4);padding:5px"></div></div>';
+            blockGameInput(panel);
+            document.body.appendChild(panel);
+            document.getElementById("mz_search").oninput = refreshF7;
+        }
+
+        function refreshF7() {
+            var search = document.getElementById("mz_search");
+            if (!search) return;
+            var query = search.value.toLowerCase();
+            var switches = "";
+            var variables = "";
+            for (var i = 1; i < $dataSystem.switches.length; i++) {
+                var switchName = $dataSystem.switches[i] || "SW " + i;
+                if (query && switchName.toLowerCase().indexOf(query) < 0 && String(i).indexOf(query) < 0) continue;
+                var enabled = $gameSwitches.value(i);
+                switches += '<div style="font-size:11px;padding:5px;border-bottom:1px solid #222;display:flex;justify-content:space-between"><span>' + i + "." + escapeHtml(switchName) + '</span><button onclick="$gameSwitches.setValue(' + i + ',' + !enabled + ');refreshF7()" style="color:' + (enabled ? "#0f0" : "#f44") + ';background:none;border:0">' + (enabled ? "ON" : "OFF") + '</button></div>';
+            }
+            for (var v = 1; v < $dataSystem.variables.length; v++) {
+                var variableName = $dataSystem.variables[v] || "VAR " + v;
+                if (query && variableName.toLowerCase().indexOf(query) < 0 && String(v).indexOf(query) < 0) continue;
+                var variableValue = Number($gameVariables.value(v));
+                if (!isFinite(variableValue)) variableValue = 0;
+                variables += '<div style="font-size:11px;padding:5px;border-bottom:1px solid #222;display:flex;justify-content:space-between"><span>' + v + "." + escapeHtml(variableName) + '</span><input type="number" value="' + variableValue + '" onchange="$gameVariables.setValue(' + v + ',Number(this.value))" style="width:55px;background:none;color:#0f0;border:0;text-align:right"></div>';
+            }
+            document.getElementById("mz_sw_box").innerHTML = switches;
+            document.getElementById("mz_var_box").innerHTML = variables;
+        }
+        window.refreshF7 = refreshF7;
+
+        function initF8() {
+            if (GodMode.panels.f8) return;
+            var panel = GodMode.panels.f8 = document.createElement("div");
+            panel.style.cssText = PANEL_STYLE + "border-color:#fc0;";
+            panel.innerHTML =
+                '<h2 style="color:#fc0;text-align:center;margin:0 0 10px">RICH MODE</h2>' +
+                '<div style="background:#222;padding:10px;border-radius:10px;margin-bottom:10px;display:flex;justify-content:space-between">GOLD: <input id="mz_gold_input" type="number" min="0" style="background:none;border:0;color:#fc0;font-size:18px;font-weight:bold;width:120px;text-align:right"></div>' +
+                '<div id="mz_item_box" style="flex:1;overflow-y:auto;background:rgba(0,0,0,.4);border-radius:8px;padding:10px"></div>';
+            blockGameInput(panel);
+            document.body.appendChild(panel);
+            document.getElementById("mz_gold_input").onchange = function () {
+                var target = Math.max(0, numberValue(this.value, 0));
+                $gameParty.gainGold(target - $gameParty.gold());
+                this.value = $gameParty.gold();
+            };
+        }
+
+        function refreshF8() {
+            var gold = document.getElementById("mz_gold_input");
+            if (!gold) return;
+            gold.value = $gameParty.gold();
+            var html = "";
+            for (var id = 1; id < $dataItems.length; id++) {
+                var item = $dataItems[id];
+                if (!item || !item.name) continue;
+                html += '<div style="display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid #330;font-size:13px"><span>' + escapeHtml(item.name) + '</span><div style="display:flex;gap:10px"><button onclick="$gameParty.gainItem($dataItems[' + id + '],-10);refreshF8()">-10</button><span style="min-width:30px;text-align:center">' + $gameParty.numItems(item) + '</span><button onclick="$gameParty.gainItem($dataItems[' + id + '],10);refreshF8()">+10</button></div></div>';
+            }
+            document.getElementById("mz_item_box").innerHTML = html;
+        }
+        window.refreshF8 = refreshF8;
+
+        document.addEventListener("keydown", function (event) {
+            if (event.repeat || event.ctrlKey || event.altKey || event.metaKey) return;
+            var map = { F5: "f5", F6: "f6", F7: "f7", F8: "f8", F9: "f9" };
+            if (!map[event.key]) return;
+            event.preventDefault();
+            GodMode.openPanel(map[event.key]);
+        });
+
+        var autoRun = setInterval(function () {
+            if (GodMode.isReady()) {
+                createTrigger();
+                clearInterval(autoRun);
+            }
+        }, 1000);
+    }());
+    </script>
+</body>
+</html>
